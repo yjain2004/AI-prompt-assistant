@@ -9,20 +9,31 @@ const fetch = globalThis.fetch || require("node-fetch");
 const FormData = require("form-data");
 require("dotenv").config();
 
+const REQUIRED_ENV = ["MONGO_URI", "OPENAI_API_KEY", "EXTENSION_SECRET", "JWT_SECRET"];
+for (const key of REQUIRED_ENV) {
+  if (!process.env[key]) {
+    console.error(`Missing required environment variable: ${key}`);
+    process.exit(1);
+  }
+}
+
 const PromptLog = require("./models/PromptLog");
 const authRoutes = require("./routes/auth");
 const { checkUsageLimit, incrementAnonymousUsage, incrementAuthUserUsage } = require("./middleware/auth");
 
 const app = express();
-const upload = multer({ dest: "uploads/" });
+const upload = multer({
+  dest: "uploads/",
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+});
 
 if (!fs.existsSync("uploads")) fs.mkdirSync("uploads", { recursive: true });
 
 // ============ Security ============
-app.use(helmet({ contentSecurityPolicy: false }));
-app.use(express.json({ limit: "10mb" }));
+app.use(helmet());
+app.use(express.json({ limit: "1mb" }));
 
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+const FRONTEND_URL = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/+$/, "");
 app.use(
   cors({
     origin: (origin, cb) => {
@@ -30,10 +41,10 @@ app.use(
       const allowed = [
         FRONTEND_URL,
         "http://localhost:5173",
-        "https://localhost:5173",
+        "http://localhost:3000",
       ];
-      if (allowed.some((o) => origin === o || origin.startsWith(o))) return cb(null, true);
-      if (origin.endsWith(".vercel.app") || origin.includes("vercel.app")) return cb(null, true);
+      if (allowed.includes(origin)) return cb(null, true);
+      if (origin.startsWith("chrome-extension://")) return cb(null, true);
       cb(null, false);
     },
     methods: ["POST", "GET"],
@@ -52,7 +63,7 @@ const apiLimiter = rateLimit({
 app.use(apiLimiter);
 
 // ============ Config ============
-const EXTENSION_SECRET = process.env.EXTENSION_SECRET || "your-secret-key-change-in-production";
+const EXTENSION_SECRET = process.env.EXTENSION_SECRET;
 const ANON_VOICE_SEC = 60;
 const LOGGED_IN_VOICE_SEC = 120;
 
@@ -207,14 +218,21 @@ app.get("/usage", validateExtensionKey, checkUsageLimit, async (req, res) => {
   }
 });
 
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
 app.use((err, _req, res, _next) => {
-  console.error(err);
+  if (err.code === "LIMIT_FILE_SIZE") {
+    return res.status(413).json({ error: "File too large" });
+  }
+  console.error("Server error:", err.message);
   res.status(500).json({ error: "Something went wrong" });
 });
 
 // ============ Start server ============
 const PORT = process.env.PORT || 3000;
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/voice-prompt";
+const MONGO_URI = process.env.MONGO_URI;
 
 mongoose
   .connect(MONGO_URI)
@@ -223,6 +241,11 @@ mongoose
     app.listen(PORT, () => console.log(`AI Proxy running on port ${PORT}`));
   })
   .catch((err) => {
-    console.error("MongoDB connection error:", err);
+    console.error("MongoDB connection error:", err.message);
     process.exit(1);
   });
+
+process.on("SIGTERM", () => {
+  console.log("SIGTERM received, shutting down gracefully");
+  mongoose.connection.close().then(() => process.exit(0));
+});

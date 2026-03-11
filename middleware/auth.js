@@ -2,7 +2,7 @@ const jwt = require("jsonwebtoken");
 const AuthUser = require("../models/AuthUser");
 const AnonymousUsage = require("../models/AnonymousUsage");
 
-const JWT_SECRET = process.env.JWT_SECRET || "change-me-in-production";
+const JWT_SECRET = process.env.JWT_SECRET;
 const ANON_LIMIT = 5;
 const LOGGED_IN_LIMIT = 20;
 
@@ -36,15 +36,19 @@ async function getAnonymousUsage(deviceId) {
 }
 
 async function getAuthUserUsage(userId) {
-  const user = await AuthUser.findOne({ userId });
-  if (!user) return null;
-
   const today = getToday();
-  if (user.lastUsageDate !== today) {
-    user.usageCount = 0;
-    user.lastUsageDate = today;
-    await user.save();
+
+  let user = await AuthUser.findOneAndUpdate(
+    { userId, lastUsageDate: { $ne: today } },
+    { $set: { usageCount: 0, lastUsageDate: today } },
+    { new: true }
+  );
+
+  if (!user) {
+    user = await AuthUser.findOne({ userId });
   }
+
+  if (!user) return null;
 
   const promptsRemaining = Math.max(0, LOGGED_IN_LIMIT - user.usageCount);
   return {
@@ -68,14 +72,21 @@ async function incrementAnonymousUsage(deviceId) {
 
 async function incrementAuthUserUsage(userId) {
   const today = getToday();
-  const user = await AuthUser.findOne({ userId });
-  if (!user) return null;
-  if (user.lastUsageDate !== today) {
-    user.usageCount = 0;
-    user.lastUsageDate = today;
+
+  let user = await AuthUser.findOneAndUpdate(
+    { userId, lastUsageDate: today },
+    { $inc: { usageCount: 1 } },
+    { new: true }
+  );
+
+  if (!user) {
+    user = await AuthUser.findOneAndUpdate(
+      { userId },
+      { $set: { usageCount: 1, lastUsageDate: today } },
+      { new: true }
+    );
   }
-  user.usageCount += 1;
-  await user.save();
+
   return user;
 }
 
@@ -96,11 +107,11 @@ async function checkUsageLimit(req, res, next) {
   }
 
   const deviceId = req.body?.userId || req.query?.userId;
-  if (!deviceId || typeof deviceId !== "string") {
+  if (!deviceId || typeof deviceId !== "string" || deviceId.length > 128) {
     return res.status(400).json({ error: "userId required" });
   }
 
-  const usage = await getAnonymousUsage(deviceId.trim());
+  const usage = await getAnonymousUsage(deviceId.trim().slice(0, 64));
   req.usageResult = usage;
   req.authUser = null;
   req.deviceId = deviceId.trim();
