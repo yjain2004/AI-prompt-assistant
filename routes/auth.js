@@ -114,4 +114,54 @@ router.post("/login", async (req, res) => {
   }
 });
 
+// GET /api/auth/me — verify token and return user info + usage
+router.get("/me", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+
+    if (!token) {
+      return res.json({ authenticated: false });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch {
+      return res.json({ authenticated: false });
+    }
+
+    if (!decoded?.userId) {
+      return res.json({ authenticated: false });
+    }
+
+    const user = await AuthUser.findOne({ userId: decoded.userId });
+    if (!user) {
+      return res.json({ authenticated: false });
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    if (user.lastUsageDate !== today) {
+      user.usageCount = 0;
+      user.lastUsageDate = today;
+      await user.save();
+    }
+
+    const LOGGED_IN_LIMIT = 20;
+    res.json({
+      authenticated: true,
+      user: {
+        id: user.userId,
+        email: user.email,
+        plan: user.plan || "free",
+      },
+      promptsRemaining: Math.max(0, LOGGED_IN_LIMIT - user.usageCount),
+      maxPrompts: LOGGED_IN_LIMIT,
+    });
+  } catch (err) {
+    console.error("Auth check error:", err);
+    res.json({ authenticated: false });
+  }
+});
+
 module.exports = router;
