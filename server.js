@@ -65,8 +65,13 @@ function validateExtensionKey(req, res, next) {
   next();
 }
 
-// Auth routes (used by frontend - no extension key)
-app.use("/api/auth", authRoutes);
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { error: "Too many auth attempts" },
+  standardHeaders: true,
+});
+app.use("/api/auth", authLimiter, authRoutes);
 
 // ============ AI Proxy Route ============
 app.post(
@@ -200,6 +205,11 @@ app.get("/usage", validateExtensionKey, checkUsageLimit, async (req, res) => {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch usage" });
   }
+});
+
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(500).json({ error: "Something went wrong" });
 });
 
 // ============ Start server ============
