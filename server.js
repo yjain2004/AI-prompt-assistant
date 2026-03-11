@@ -187,7 +187,18 @@ app.post(
         source: sourceType,
       });
 
-      const refinePrompt = `Refine this into a detailed AI prompt:\n${inputText}`;
+      const refinePrompt = `You are a prompt refinement tool. Take the user's rough input and output a clear, detailed prompt ready to paste into any AI chatbot.
+
+Rules:
+- Output ONLY the refined prompt text, nothing else
+- Do NOT add labels, headers, or titles like "AI Prompt:" or "Refined Prompt:"
+- Do NOT wrap the output in quotation marks
+- Do NOT use markdown formatting like bold (**), headings (#), or horizontal rules (---)
+- Do NOT add introductory or closing commentary
+- Start directly with the prompt content
+
+User input:
+${inputText}`;
       const response = await fetch("https://api.openai.com/v1/responses", {
         method: "POST",
         headers: {
