@@ -1,4 +1,5 @@
 const express = require("express");
+const crypto = require("crypto");
 const mongoose = require("mongoose");
 const multer = require("multer");
 const fs = require("fs");
@@ -18,6 +19,7 @@ for (const key of REQUIRED_ENV) {
 }
 
 const PromptLog = require("./models/PromptLog");
+const PromptCache = require("./models/PromptCache");
 const authRoutes = require("./routes/auth");
 const { checkUsageLimit, incrementAnonymousUsage, incrementAuthUserUsage } = require("./middleware/auth");
 
@@ -160,6 +162,18 @@ app.post(
       }
 
       const effectiveUserId = authUser?.userId || deviceId || userId;
+      const inputHash = crypto.createHash("sha256").update(inputText.trim().toLowerCase()).digest("hex");
+
+      const cached = await PromptCache.findOne({ inputHash });
+      if (cached) {
+        return res.json({
+          structuredPrompt: cached.refinedText,
+          limitReached: false,
+          promptsRemaining: usageResult.promptsRemaining,
+          maxPrompts: usageResult.maxPrompts,
+          signedUp: usageResult.signedUp,
+        });
+      }
 
       if (authUser) {
         await incrementAuthUserUsage(authUser.userId);
@@ -186,6 +200,8 @@ app.post(
       const data = await response.json();
       const structuredPrompt =
         data.output_text || data.output?.[0]?.content?.[0]?.text || inputText;
+
+      PromptCache.create({ inputHash, refinedText: structuredPrompt }).catch(() => {});
 
       const newRemaining = usageResult.promptsRemaining - 1;
 
