@@ -21,6 +21,7 @@ for (const key of REQUIRED_ENV) {
 const PromptLog = require("./models/PromptLog");
 const PromptCache = require("./models/PromptCache");
 const authRoutes = require("./routes/auth");
+const feedbackRoutes = require("./routes/feedback");
 const { checkUsageLimit, incrementAnonymousUsage, incrementAuthUserUsage } = require("./middleware/auth");
 
 const app = express();
@@ -36,16 +37,17 @@ app.use(helmet());
 app.use(express.json({ limit: "1mb" }));
 
 const FRONTEND_URL = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/+$/, "");
+const ALLOWED_ORIGINS = [
+  FRONTEND_URL,
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "https://ai-frontend-rust-ten.vercel.app",
+].filter(Boolean);
 app.use(
   cors({
     origin: (origin, cb) => {
       if (!origin) return cb(null, true);
-      const allowed = [
-        FRONTEND_URL,
-        "http://localhost:5173",
-        "http://localhost:3000",
-      ];
-      if (allowed.includes(origin)) return cb(null, true);
+      if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
       if (origin.startsWith("chrome-extension://")) return cb(null, true);
       cb(null, false);
     },
@@ -85,6 +87,14 @@ const authLimiter = rateLimit({
   standardHeaders: true,
 });
 app.use("/api/auth", authLimiter, authRoutes);
+
+const feedbackLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: "Too many feedback submissions" },
+  standardHeaders: true,
+});
+app.use("/api/feedback", feedbackLimiter, feedbackRoutes);
 
 // ============ AI Proxy Route ============
 app.post(
